@@ -1,0 +1,198 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>MedRule — Symptom Consult</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:wght@400;500;800&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header id="top"></header>
+
+  <main>
+    <section class="hero">
+      <h1>Check your symptoms.</h1>
+      <p class="lede">Describe what you feel in plain English or tap symptoms below. MedRule runs forward chaining over 118 production rules and MYCIN certainty factors.</p>
+
+      <label class="say" for="q">
+        <span class="sr">Describe your symptoms</span>
+        <input id="q" type="text" autocomplete="off" placeholder="e.g. high temperature, pain behind eyes, severe joint ache, no cough...">
+      </label>
+      <div class="heard" id="heard" aria-live="polite"></div>
+    </section>
+
+    <div class="legend">
+      <span>Tap a symptom to cycle certainty:</span>
+      <span><b>1×</b> Slightly (0.40)</span>
+      <span><b>2×</b> Probably (0.70)</span>
+      <span><b>3×</b> Definitely (1.00)</span>
+    </div>
+
+    <div id="regions"></div>
+
+    <div class="runbar">
+      <button class="run" id="go" type="button" disabled>Run Diagnosis ✚</button>
+      <button class="ghost" id="clr" type="button">Clear all</button>
+      <span id="count">0 symptoms selected</span>
+    </div>
+
+    <section id="out" hidden aria-live="polite"></section>
+  </main>
+
+  <script src="kb.js"></script>
+  <script src="engine.js"></script>
+  <script src="common.js"></script>
+  <script>
+    const { SYMPTOMS, DISEASES, REGIONS } = window.KB;
+    const { run, diagnoses, triage, explain, parse, label } = window.MedEngine;
+
+    const LEVELS = [
+      { l: '1', cf: 0.4, tag: 'SLIGHT' },
+      { l: '2', cf: 0.7, tag: 'PROBABLE' },
+      { l: '3', cf: 1.0, tag: 'DEFINITE' }
+    ];
+    const REGION_COLORS = ['#41ead4', '#fbff12', '#ff206e', '#ffffff', '#41ead4', '#fbff12', '#ff206e'];
+
+    const picked = {}; // symptom_id -> level index (0, 1, 2)
+    let parsedText = { matches: [], negated: [] };
+
+    const qEl = document.getElementById('q');
+    const heardEl = document.getElementById('heard');
+    const regionsEl = document.getElementById('regions');
+    const goBtn = document.getElementById('go');
+    const clrBtn = document.getElementById('clr');
+    const countEl = document.getElementById('count');
+    const outEl = document.getElementById('out');
+
+    // Render symptom pills grouped by body region
+    Object.entries(REGIONS).forEach(([region, ids], idx) => {
+      const sec = document.createElement('section');
+      sec.className = 'region';
+      sec.style.setProperty('--c', REGION_COLORS[idx % REGION_COLORS.length]);
+      sec.innerHTML = `<h3>${region}</h3><div class="pills">${ids.map(id =>
+        `<button type="button" class="pill" data-id="${id}">${SYMPTOMS[id].label}<i></i></button>`
+      ).join('')}</div>`;
+      regionsEl.appendChild(sec);
+    });
+
+    regionsEl.addEventListener('click', e => {
+      const btn = e.target.closest('.pill');
+      if (!btn) return;
+      const id = btn.dataset.id;
+      if (picked[id] === undefined) picked[id] = 0;
+      else if (picked[id] < 2) picked[id]++;
+      else delete picked[id];
+      syncPills();
+    });
+
+    function syncPills() {
+      regionsEl.querySelectorAll('.pill').forEach(btn => {
+        const idx = picked[btn.dataset.id];
+        if (idx === undefined) {
+          btn.removeAttribute('data-l');
+          btn.querySelector('i').textContent = '';
+        } else {
+          btn.setAttribute('data-l', LEVELS[idx].l);
+          btn.querySelector('i').textContent = LEVELS[idx].tag;
+        }
+      });
+      updateState();
+    }
+
+    qEl.addEventListener('input', () => {
+      parsedText = qEl.value.trim() ? parse(qEl.value) : { matches: [], negated: [] };
+      heardEl.innerHTML =
+        parsedText.matches.map(m =>
+          `<span class="chip"><b>${label(m.symptom)}</b> <q>(${m.how} · CF ${m.cf.toFixed(1)})</q></span>`
+        ).join('') +
+        parsedText.negated.map(n =>
+          `<span class="chip no">Ignored: <s>${n}</s></span>`
+        ).join('');
+      updateState();
+    });
+
+    function mergedSymptoms() {
+      const syms = {};
+      parsedText.matches.forEach(m => { syms[m.symptom] = m.cf; });
+      Object.entries(picked).forEach(([id, idx]) => {
+        const cf = LEVELS[idx].cf;
+        syms[id] = Math.max(cf, syms[id] || 0);
+      });
+      return syms;
+    }
+
+    function updateState() {
+      const total = Object.keys(mergedSymptoms()).length;
+      countEl.textContent = `${total} symptom${total === 1 ? '' : 's'} active`;
+      goBtn.disabled = total === 0;
+    }
+
+    clrBtn.addEventListener('click', () => {
+      Object.keys(picked).forEach(k => delete picked[k]);
+      qEl.value = '';
+      parsedText = { matches: [], negated: [] };
+      heardEl.innerHTML = '';
+      outEl.hidden = true;
+      window.setPulse('routine', 0);
+      syncPills();
+    });
+
+    goBtn.addEventListener('click', () => {
+      const syms = mergedSymptoms();
+      if (!Object.keys(syms).length) return;
+      const res = run(syms);
+      const tri = triage(res);
+      const ranked = diagnoses(res);
+
+      // Save case to sessionStorage so Inference Lab can replay this exact case
+      sessionStorage.setItem('medrule_last_syms', JSON.stringify(syms));
+
+      window.setPulse(tri.level, ranked.length ? ranked[0][1] : 0);
+
+      let alertHtml = '';
+      if (tri.level === 'emergency') {
+        alertHtml = `<div class="alert"><b>EMERGENCY RED FLAG (CF ${tri.cf.toFixed(2)})</b> Seek immediate emergency medical attention.</div>`;
+      } else if (tri.level === 'urgent') {
+        alertHtml = `<div class="alert urgent"><b>URGENT WARNING (CF ${tri.cf.toFixed(2)})</b> Consult a doctor today for clinical evaluation.</div>`;
+      }
+
+      const listHtml = ranked.length
+        ? `<ol class="rank">${ranked.map(([d, cf], i) => `
+            <li class="${i === 0 ? 'top' : ''}" style="--i:${i};--cf:${cf.toFixed(3)}">
+              <button type="button" class="rowbtn" aria-expanded="${i === 0 ? 'true' : 'false'}">
+                <span class="n">0${i + 1}</span>
+                <span class="nm">${d}</span>
+                <span class="pc">${Math.round(cf * 100)}%</span>
+                <span class="bar"><i></i></span>
+              </button>
+              <div class="why" ${i === 0 ? '' : 'hidden'}>
+                <p class="adv">⚕ ${DISEASES[d].advice}</p>
+                <pre>${explain(res, d)}</pre>
+              </div>
+            </li>`).join('')}</ol>`
+        : `<p class="empty">No condition crossed the 20% certainty threshold. Add more symptoms to narrow the differential.</p>`;
+
+      outEl.innerHTML = `
+        <h2>Differential Diagnosis <small>Forward chaining completed in ${res.cycles} cycle(s) · ${res.trace.length} rules fired · Click any row to inspect MYCIN proof</small></h2>
+        ${alertHtml}
+        ${listHtml}
+        <div class="next"><a href="lab.html">Step through this case in the Inference Lab →</a></div>
+      `;
+      outEl.hidden = false;
+      outEl.scrollIntoView({ behavior: 'smooth' });
+    });
+
+    outEl.addEventListener('click', e => {
+      const btn = e.target.closest('.rowbtn');
+      if (!btn) return;
+      const why = btn.nextElementSibling;
+      const open = btn.getAttribute('aria-expanded') === 'true';
+      btn.setAttribute('aria-expanded', String(!open));
+      why.hidden = open;
+    });
+  </script>
+</body>
+</html>

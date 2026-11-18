@@ -1,0 +1,154 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>MedRule — Knowledge Base</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:wght@400;500;800&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header id="top"></header>
+
+  <main class="pg">
+    <h2>Knowledge Base ℞</h2>
+    <p class="sub">All medical facts live here as declarative IF-THEN production rules with MYCIN certainty factors (Unit II). Click any shared symptom chip to highlight overlapping rules.</p>
+
+    <div class="kb">
+      <aside>
+        <input id="filter" class="find" type="search" placeholder="Filter diseases or symptoms...">
+        <ul class="idx" id="idx"></ul>
+      </aside>
+
+      <section class="panel" id="panel" aria-live="polite"></section>
+    </div>
+  </main>
+
+  <script src="kb.js"></script>
+  <script src="engine.js"></script>
+  <script src="common.js"></script>
+  <script>
+    const { DISEASES, SYMPTOMS } = window.KB;
+    const { RULES, label } = window.MedEngine;
+
+    const idxEl = document.getElementById('idx');
+    const panelEl = document.getElementById('panel');
+    const filterEl = document.getElementById('filter');
+
+    const diseaseNames = Object.keys(DISEASES);
+    let activeKey = diseaseNames[0];
+    let highlightSym = null;
+
+    function buildIndex(q = '') {
+      const query = q.trim().toLowerCase();
+      const matchingDiseases = diseaseNames.filter(d => {
+        if (!query) return true;
+        if (d.toLowerCase().includes(query)) return true;
+        return Object.keys(DISEASES[d].symptoms).some(s => SYMPTOMS[s].label.toLowerCase().includes(query));
+      });
+
+      idxEl.innerHTML =
+        `<li class="sep">CONDITIONS (${matchingDiseases.length})</li>` +
+        matchingDiseases.map(d =>
+          `<li><button type="button" data-key="${d}" ${d === activeKey ? 'aria-current="true"' : ''}>${d}</button></li>`
+        ).join('') +
+        `<li class="sep">SYSTEM RULES</li>
+         <li><button type="button" data-key="__syndromes__" ${activeKey === '__syndromes__' ? 'aria-current="true"' : ''}>Intermediate Syndromes</button></li>
+         <li><button type="button" data-key="__triage__" ${activeKey === '__triage__' ? 'aria-current="true"' : ''}>Emergency &amp; Urgent Triage</button></li>`;
+    }
+
+    function formatPremises(premises) {
+      return premises.map(p => `<u>${label(p)}</u>`).join(' AND ');
+    }
+
+    function renderPanel() {
+      if (activeKey === '__syndromes__') {
+        const synRules = RULES.filter(r => r.conclusion.startsWith('syndrome:') || r.premises.some(p => p.startsWith('syndrome:')));
+        panelEl.innerHTML = `
+          <h3>2-Cycle Chaining</h3>
+          <p class="adv">These rules derive intermediate syndromes in Cycle 1, which then trigger final diagnoses in Cycle 2.</p>
+          ${synRules.map(r => `
+            <div class="rl" style="--cf:${r.cf}">
+              <div class="t"><strong>${r.id}:</strong> IF ${formatPremises(r.premises)} THEN <u>${label(r.conclusion)}</u></div>
+              <div class="cf">${r.cf.toFixed(2)}</div>
+              <div class="b"><i></i></div>
+            </div>`).join('')}
+        `;
+        return;
+      }
+
+      if (activeKey === '__triage__') {
+        const triRules = RULES.filter(r => r.conclusion.startsWith('triage:'));
+        panelEl.innerHTML = `
+          <h3>Red-Flag Triage</h3>
+          <p class="adv">Evaluated in parallel with diagnosis rules to flag emergency or urgent warning combinations.</p>
+          ${triRules.map(r => `
+            <div class="rl" style="--cf:${r.cf}">
+              <div class="t"><strong>${r.id}:</strong> IF ${formatPremises(r.premises)} THEN <u>${label(r.conclusion)}</u></div>
+              <div class="cf">${r.cf.toFixed(2)}</div>
+              <div class="b"><i></i></div>
+            </div>`).join('')}
+        `;
+        return;
+      }
+
+      const info = DISEASES[activeKey];
+      const condRules = RULES.filter(r => r.conclusion === 'dx:' + activeKey);
+
+      // Find other diseases sharing symptoms with this one
+      const mySyms = Object.keys(info.symptoms);
+      const sharedCounts = {};
+      mySyms.forEach(s => {
+        const count = diseaseNames.filter(d => s in DISEASES[d].symptoms).length;
+        if (count > 1) sharedCounts[s] = count;
+      });
+
+      panelEl.innerHTML = `
+        <h3>${activeKey}</h3>
+        <p class="adv">⚕ ${info.advice}</p>
+        <div class="shares">
+          <span>Differential overlap (click to highlight):</span>
+          ${Object.entries(sharedCounts).map(([s, c]) =>
+            `<button type="button" data-sym="${s}" style="${highlightSym === s ? 'background:var(--yel);color:var(--ink);border-color:var(--yel)' : ''}">
+              ${SYMPTOMS[s].label}<em>×${c}</em>
+            </button>`
+          ).join('')}
+        </div>
+        ${condRules.map(r => {
+          const isHot = highlightSym && r.premises.includes(highlightSym);
+          return `
+            <div class="rl ${isHot ? 'hot' : ''}" style="--cf:${r.cf}">
+              <div class="t"><strong>${r.id}:</strong> IF ${formatPremises(r.premises)} THEN <u>${activeKey}</u></div>
+              <div class="cf">${r.cf.toFixed(2)}</div>
+              <div class="b"><i></i></div>
+            </div>`;
+        }).join('')}
+      `;
+    }
+
+    idxEl.addEventListener('click', e => {
+      const btn = e.target.closest('button[data-key]');
+      if (!btn) return;
+      activeKey = btn.dataset.key;
+      highlightSym = null;
+      buildIndex(filterEl.value);
+      renderPanel();
+    });
+
+    panelEl.addEventListener('click', e => {
+      const btn = e.target.closest('button[data-sym]');
+      if (!btn) return;
+      const s = btn.dataset.sym;
+      highlightSym = highlightSym === s ? null : s;
+      renderPanel();
+    });
+
+    filterEl.addEventListener('input', () => buildIndex(filterEl.value));
+
+    buildIndex();
+    renderPanel();
+  </script>
+</body>
+</html>

@@ -1,0 +1,160 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>MedRule — Inference Lab</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:wght@400;500;800&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header id="top"></header>
+
+  <main class="pg">
+    <h2>Inference Lab ♥</h2>
+    <p class="sub">Watch Forward Chaining execute cycle by cycle. Each fired rule updates Working Memory on the right using MYCIN certainty combination.</p>
+
+    <div class="ctl">
+      <select id="preset" aria-label="Choose preset case">
+        <option value="last">Last Consult Case (from home page)</option>
+        <option value="flu">Preset 1: Viral Flu (2-cycle syndrome chaining)</option>
+        <option value="dengue">Preset 2: Dengue + Urgent Triage</option>
+        <option value="emergency">Preset 3: Chest Pain + Breathlessness (Emergency)</option>
+        <option value="gastro">Preset 4: Food Poisoning vs Viral Gastro</option>
+      </select>
+      <button class="btn go" id="stepBtn" type="button">Step 1 Rule →</button>
+      <button class="btn" id="allBtn" type="button">Run All</button>
+      <button class="btn" id="resetBtn" type="button">Reset</button>
+    </div>
+
+    <div class="facts" id="initialFacts"></div>
+
+    <div class="lab">
+      <div>
+        <ul class="feed" id="feed"></ul>
+      </div>
+
+      <aside class="wm">
+        <h3>Working Memory</h3>
+        <div class="wmr" id="wmList"></div>
+      </aside>
+    </div>
+  </main>
+
+  <script src="kb.js"></script>
+  <script src="engine.js"></script>
+  <script src="common.js"></script>
+  <script>
+    const { run, label, triage } = window.MedEngine;
+
+    const PRESETS = {
+      flu: { fever: 1.0, chills: 0.8, body_ache: 0.8, dry_cough: 0.8 },
+      dengue: { fever: 1.0, eye_pain: 0.8, joint_pain: 0.8, rash: 0.8 },
+      emergency: { chest_pain: 1.0, shortness_of_breath: 1.0 },
+      gastro: { vomiting: 0.8, diarrhea: 0.8, abdominal_pain: 0.8, fever: 0.7 }
+    };
+
+    const presetEl = document.getElementById('preset');
+    const stepBtn = document.getElementById('stepBtn');
+    const allBtn = document.getElementById('allBtn');
+    const resetBtn = document.getElementById('resetBtn');
+    const initEl = document.getElementById('initialFacts');
+    const feedEl = document.getElementById('feed');
+    const wmEl = document.getElementById('wmList');
+
+    let initialSyms = {};
+    let fullTrace = [];
+    let pointer = 0;
+    let liveWM = {};
+    let lastCycle = 0;
+
+    function loadCase(key) {
+      if (key === 'last') {
+        const saved = sessionStorage.getItem('medrule_last_syms');
+        initialSyms = saved ? JSON.parse(saved) : PRESETS.flu;
+        if (!saved) presetEl.value = 'flu';
+      } else {
+        initialSyms = PRESETS[key];
+      }
+
+      const sim = run(initialSyms);
+      fullTrace = sim.trace;
+      pointer = 0;
+      liveWM = { ...initialSyms };
+      lastCycle = 0;
+
+      initEl.innerHTML = Object.entries(initialSyms)
+        .map(([s, cf]) => `<span>Initial Fact: <strong>${label(s)}</strong> (${cf.toFixed(2)})</span>`)
+        .join('');
+
+      feedEl.innerHTML = '';
+      stepBtn.disabled = fullTrace.length === 0;
+      allBtn.disabled = fullTrace.length === 0;
+      window.setPulse('routine', 0);
+      renderWM(null);
+    }
+
+    function renderWM(updatedFact) {
+      const entries = Object.entries(liveWM).sort((a, b) => b[1] - a[1]);
+      const topDx = entries.find(([f]) => f.startsWith('dx:'));
+
+      wmEl.innerHTML = entries.map(([fact, cf]) => {
+        const cls = [
+          fact === updatedFact ? 'flash' : '',
+          fact.startsWith('triage:') ? 'tri' : '',
+          fact.startsWith('syndrome:') ? 'syn' : '',
+          topDx && fact === topDx[0] ? 'lead' : ''
+        ].filter(Boolean).join(' ');
+
+        return `
+          <div class="${cls}" style="--cf:${cf.toFixed(3)}">
+            <span>${label(fact)}<b>${cf.toFixed(3)}</b></span>
+            <em></em>
+          </div>`;
+      }).join('');
+    }
+
+    function stepOnce() {
+      if (pointer >= fullTrace.length) return;
+      const s = fullTrace[pointer++];
+
+      if (s.cycle !== lastCycle) {
+        lastCycle = s.cycle;
+        feedEl.insertAdjacentHTML('beforeend', `<li class="cyc">Cycle ${s.cycle}</li>`);
+      }
+
+      liveWM[s.rule.conclusion] = s.after;
+
+      const premHtml = s.rule.premises.map(p => `<u>${label(p)}</u>`).join(' AND ');
+      const mathStr = s.before === undefined
+        ? `${s.rule.cf.toFixed(2)} × ${Math.min(...Object.values(s.pc)).toFixed(2)} = ${s.after.toFixed(3)}`
+        : `${s.before.toFixed(3)} + ${s.contrib.toFixed(3)} × (1 − ${s.before.toFixed(3)}) = ${s.after.toFixed(3)}`;
+
+      feedEl.insertAdjacentHTML('beforeend', `
+        <li class="fr">
+          <div class="t"><span class="r">${s.rule.id}</span>IF ${premHtml} THEN <u>${label(s.rule.conclusion)}</u></div>
+          <code>${mathStr}</code>
+        </li>`);
+
+      renderWM(s.rule.conclusion);
+
+      if (pointer >= fullTrace.length) {
+        stepBtn.disabled = true;
+        allBtn.disabled = true;
+        const tri = triage({ wm: liveWM });
+        const top = Object.entries(liveWM).filter(([f]) => f.startsWith('dx:')).sort((a, b) => b[1] - a[1])[0];
+        window.setPulse(tri.level, top ? top[1] : 0);
+      }
+    }
+
+    presetEl.addEventListener('change', () => loadCase(presetEl.value));
+    stepBtn.addEventListener('click', stepOnce);
+    allBtn.addEventListener('click', () => { while (pointer < fullTrace.length) stepOnce(); });
+    resetBtn.addEventListener('click', () => loadCase(presetEl.value));
+
+    loadCase('last');
+  </script>
+</body>
+</html>

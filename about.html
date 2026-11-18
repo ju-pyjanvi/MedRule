@@ -1,0 +1,82 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>MedRule — Architecture &amp; Syllabus</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:wght@400;500;800&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header id="top"></header>
+
+  <main class="pg">
+    <h2>How It Works ⚕</h2>
+    <p class="sub">MedRule implements the classic 5-part MYCIN Expert System architecture (Unit IV) without black-box neural networks or external LLM APIs.</p>
+
+    <div class="bars" role="group" aria-label="Expert system components">
+      <button type="button" class="bar5 open" style="--c:#ff206e">
+        <h3>1. Knowledge Base</h3>
+        <p>18 diseases, 42 symptoms, and 118 declarative IF-THEN production rules stored strictly as data, completely separated from inference logic.</p>
+      </button>
+      <button type="button" class="bar5" style="--c:#fbff12">
+        <h3>2. Working Memory</h3>
+        <p>Dynamic runtime state storing active symptoms, derived intermediate syndromes, and running certainty factors for each hypothesis.</p>
+      </button>
+      <button type="button" class="bar5" style="--c:#41ead4">
+        <h3>3. Inference Engine</h3>
+        <p>Data-driven Forward Chaining (Match → Fire → Repeat). Fires all satisfied rules in cycles until no new conclusions can be derived.</p>
+      </button>
+      <button type="button" class="bar5 w" style="--c:#ffffff">
+        <h3>4. Explanation Module</h3>
+        <p>Audits the exact chain of fired rules, premise certainty values, and step-by-step MYCIN combination math for full transparency.</p>
+      </button>
+      <button type="button" class="bar5" style="--c:#ff206e">
+        <h3>5. NLP Preprocessor</h3>
+        <p>Maps free-text descriptions to canonical symptoms using longest-phrase synonym matching, Levenshtein spell repair, and negation filtering.</p>
+      </button>
+    </div>
+
+    <section class="map" style="--c:#41ead4">
+      <h3>Unit II</h3>
+      <div>
+        <strong>Knowledge Representation &amp; Text Feature Extraction</strong>
+        <p>Uses propositional IF-THEN production rules for medical knowledge representation, paired with synonym dictionaries, stopword removal, and TF-IDF cosine similarity (in Python) to normalize patient input.</p>
+      </div>
+    </section>
+
+    <section class="map" style="--c:#fbff12">
+      <h3>Unit III</h3>
+      <div>
+        <strong>Decision Making in Uncertainty (MYCIN Certainty Factors)</strong>
+        <p>Handles overlapping symptoms and uncertain observations using Shortliffe &amp; Buchanan’s Certainty Factor algebra rather than rigid Boolean logic:</p>
+        <div class="formula">
+          Contribution = CF(rule) × min(CF(premise₁), CF(premise₂), ...)<br>
+          CF_combined(A, B) = A + B × (1 − A)
+        </div>
+      </div>
+    </section>
+
+    <section class="map" style="--c:#ff206e">
+      <h3>Unit IV</h3>
+      <div>
+        <strong>Real-World Applications &amp; MYCIN Case Study</strong>
+        <p>Directly mirrors the Stanford MYCIN medical consultation system: separating domain rules from the inference engine, triaging urgent red flags, and answering <em>"Why did you reach this diagnosis?"</em></p>
+      </div>
+    </section>
+  </main>
+
+  <script src="kb.js"></script>
+  <script src="engine.js"></script>
+  <script src="common.js"></script>
+  <script>
+    const bars = document.querySelectorAll('.bar5');
+    bars.forEach(b => b.addEventListener('click', () => {
+      bars.forEach(x => x.classList.remove('open'));
+      b.classList.add('open');
+    }));
+  </script>
+</body>
+</html>
