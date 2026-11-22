@@ -8,7 +8,7 @@ Type your symptoms in plain English, and MedRule ranks the likely conditions wit
 
 <!-- Add a screenshot or GIF here: ![MedRule demo](docs/demo.gif) -->
 
-**Live demo:** _add your Render link here_
+**Live demo:** https://ju-pyjanvi.github.io/MedRule/
 
 ---
 
